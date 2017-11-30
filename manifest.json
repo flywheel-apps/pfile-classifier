@@ -1,0 +1,21 @@
+{
+  "name": "pfile-classifier",
+  "label": "Flywheel Pfile Classifier",
+  "description": "Extract metadata from GE Pfiles.",
+  "maintainer": "Flywheel <support@flywheel.io>",
+  "author": "Flywheel <support@flywheel.io>",
+  "url": "https://github.com/flywheel-apps",
+  "source": "https://github.com/flywheel-apps/pfile-classifier",
+  "license": "Apache-2.0",
+  "flywheel": "0",
+  "version": "0.1.0rc1",
+  "config": {},
+  "inputs": {
+    "api_key": {
+      "base": "api-key"
+    }
+  },
+  "custom": {
+    "docker-image": "flywheel/pfile-classifier:v0.1.0"
+  }
+}

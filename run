@@ -1,0 +1,19 @@
+#! /bin/bash
+#
+# Flywheel 2017
+#
+#
+
+
+## DEFINE VARIABLES
+
+FLYWHEEL_BASE=/flywheel/v0
+MANIFEST_FILE=$FLYWHEEL_BASE/manifest.json
+CONFIG_FILE=$FLYWHEEL_BASE/config.json
+CONTAINER='[flywheel/pfile-classifier]'
+
+## CONFIGURE ENV
+#source ${FLYWHEEL_BASE}/docker-env.sh
+
+## Use Python SDK to classify pfiles
+python ${FLYWHEEL_BASE}/classify_pfile.py
