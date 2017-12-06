@@ -101,8 +101,8 @@ def convert_to_si(value):
     """
     # Define
     conversions = {
-            'msec': 1000,
-            'mm': 1000,
+            'msec': 0.001,
+            'mm': 0.001,
             'deg.': 1,
             }
     # Split number and label up
