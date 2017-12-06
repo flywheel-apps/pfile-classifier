@@ -2,7 +2,6 @@ import datetime
 import json
 import logging
 import os
-from pprint import pprint
 import re
 import sys
 
@@ -10,7 +9,7 @@ from flywheel import Flywheel
 
 import measurement_from_label
 
-# TODO: Add logging...
+# Add logging...
 logging.basicConfig()
 log = logging.getLogger('pfile-classifier')
 
@@ -20,14 +19,15 @@ def get_fw_sessions(fw, container_type, container_id):
     """
     Get project sessions based off of container type (project or session)
     """
-    log.debug('get_fw_session')
     if container_type == 'project':
+        log.info('Getting sessions within project')
         # Get project
         project = fw.get_project(container_id)
         # Get list of sessions within project
         project_sessions = fw.get_project_sessions(container_id)
         project_id = container_id
     elif container_type == 'session':
+        log.info('Getting session')
         # If container ID is actually a session, get the specific session
         session = fw.get_session(container_id)
         # Place the single session within a list to iterate over (mirrors project_sessions above)
@@ -36,21 +36,20 @@ def get_fw_sessions(fw, container_type, container_id):
     else:
         # TODO: test that this works!!
         log.error("Container ID %s is not associated with a project or a session" % container_id)
-        #raise Exception
+        sys.exit(1)
 
     return project_sessions, project_id
 
 
-def find_efile_pfile(files, files_found):
+def find_efile_pfile(acq, files_found):
     """
     Determine if a pfile exists in acquisition
     """
-    log.debug('find_efile_pfile')
     # Initialize booleans
     pfile_found = False
     efile_found = False
     # Iterate over files
-    for f in files:
+    for f in acq['files']:
         # Check if file has a type
         if f.get('type'):
             # Determine if a pfile or efile without a classification is present
@@ -67,18 +66,58 @@ def find_efile_pfile(files, files_found):
     # If both pfile and efile are within acquisition, we are going to classify the files...
     if pfile_found and efile_found:
         files_found[acq['_id']] = {
-                    'files': files,
+                    'files': acq['files'],
                     'efile_name': efilename,
                     'pfile_name': pfilename,
+                    'timestamp': acq.get('timestamp')
                     }
 
+def convert_string(value):
+    """
+
+    Try to convert value to an integer or float.
+
+    If unable to convert without raising a Value Error,
+        leave value as type string.
+
+    """
+    try:
+        value = int(value)
+    except ValueError:
+        try:
+            value = float(value)
+        except ValueError:
+            pass
+
+    return value
+
+def convert_to_si(value):
+    """ Convert the value to into SI units
+
+    msec are converted to seconds
+    mm are converted to meters
+    degrees remain within degrees (only 'deg.' label is removed)
+
+    """
+    # Define
+    conversions = {
+            'msec': 1000,
+            'mm': 1000,
+            'deg.': 1,
+            }
+    # Split number and label up
+    num, label = value.split(' ')
+    # Convert string to a number (int or float)
+    num = convert_string(num)
+
+    return num * conversions[label]
 
 def parse_efile(path):
     """
     Parse efile contents.
     Returns dictionary of key/value pairs parsed from the efile.
     """
-    log.debug('parse_efile')
+    log.debug('Parsing efile')
     # Read in file
     fp = open(path, 'r')
     contents = fp.readlines()
@@ -101,28 +140,14 @@ def parse_efile(path):
         #       any date in format MM/DD/YYY
         #       "gw_point" key
 
-        # Handle values with labels
-        # TODO!!! finish this
-        if re.match("[0-9]*[.][0-9]* (mm|deg|msec)", value):
-            print "Key: ", key, " Value: ", value
-            print "Do something"
-            # TODO: Convert to SI unit...
-            # TODO: mm is not being picked up... float number?
+        # Handle values with the following labels
+        if re.match("[0-9]*[.]?[0-9]* (mm|deg|msec)", value):
+            # Convert to SI unit...
+            value = convert_to_si(value)
+        # Otherwise, try to convert value to int, float or leave as string
+        else:
+            value = convert_string(value)
 
-        # Try to convert value to int, float, if ValueError raised on both, leave as string
-        try:
-            value = int(value)
-        except ValueError:
-            try:
-                value = float(value)
-            except ValueError:
-                pass
-
-        ## Handle date
-        # if value in format  MM/DD/YYY - convert to a date object
-        if (type(value) is str) and re.match("\d{2}/\d{2}/\d{3}", value):
-            MM,DD,YYY = value.split('/')
-            value = datetime.date(int(YYY) + 1900, int(MM), int(DD))
 
         ## Slice information in E file
         # gw_point being nested, skip over...
@@ -139,12 +164,22 @@ def parse_efile(path):
         else:
             info[key] = value
 
-    return info
+    ## Handle date/time
+    # date_of_scan --- in format  MM/DD/YYY - GE date format
+    # time_of_scan --- in format HH/MM  -- only hours/minutes
+    date_of_scan = info['date_of_scan']
+    time_of_scan = info['time_of_scan']
+    # Assert if matches the expected format
+    if re.match("\d{2}/\d{2}/\d{3}", date_of_scan) and re.match("\d{2}:\d{2}", time_of_scan):
+        MM,DD,YYY = date_of_scan.split('/')
+        HH, mm = time_of_scan.split(':')
+        # Create date time object
+        date_time_of_scan = datetime.datetime(int(YYY) + 1900, int(MM), int(DD), int(HH), int(mm))
+        # Remove values from dictionary
+        info.pop('date_of_scan')
+        info.pop('time_of_scan')
 
-
-
-
-
+    return date_time_of_scan, info
 
 
 if __name__ == '__main__':
@@ -167,7 +202,7 @@ if __name__ == '__main__':
     container_id = str(config_contents['destination']['id'])
     container_type = str(config_contents['destination']['type'])
 
-    ### Get info using SDK ###
+    ### Get session(s) ###
     # initiate fw class
     fw = Flywheel(api_key)
     # Get the sessions in the project and project ID
@@ -181,7 +216,8 @@ if __name__ == '__main__':
         session_acqs = fw.get_session_acquisitions(session_id)
         for acq in session_acqs:
             # Determine if efile and pfile are within acquisition
-            find_efile_pfile(acq['files'], files_found)
+            find_efile_pfile(acq, files_found)
+
     # Check if unclassified pfiles/efiles found
     if files_found:
         log.info("Identified %d acquisitions with an unclassified pfile and efile" % len(files_found))
@@ -189,7 +225,6 @@ if __name__ == '__main__':
         log.info("No unclassified efile/pfile pairings were identified within %s ID %s" % (container_type, container_id))
         log.info("Nothing to do...")
         sys.exit(0)
-
 
     ### Modify meta info ###
     # Define and create working dir
@@ -203,9 +238,13 @@ if __name__ == '__main__':
         path = os.path.join(working_dir, efilename)
         fw.download_file_from_acquisition(acq_id, efilename, path)
         # Parse the efile
-        info = parse_efile(path)
-        pprint(info)
+        date_time_of_scan, info = parse_efile(path)
 
+        ## Check if acquisition timestamp is assign, if not, use date_time_of_scan
+        if files_found[acq_id]['timestamp'] is None:
+            # TODO: Understand how to handle timezone
+            #fw.modify_acquisition(acq_id, {'timestamp': date_time_of_scan.strftime('%Y-%m-%dT%H:%M:%SZ%z')})
+            pass
 
         ## Determine classification of pfile
         log.debug("Classifying pfile from series description")
@@ -220,15 +259,11 @@ if __name__ == '__main__':
         pfile_name_noextension = files_found[acq_id]['pfile_name'].split('.')[0]
         # Iterate over every file within acquisition
         for f in files_found[acq_id]['files']:
-            # Check if pfilename is in filename
-            if pfile_name_noextension in f['name']:
-                # check if physio data, if it is, move on...
-                if 'physio' in f['name']:
-                    continue
-                # Otherwise, add the classification to the file
-                else:
-                    log.debug("Adding measurement %s to the file %s" % (efile_measure, f['name']))
-                    #print "fw.set_acquisition_file_info(%s, %s, {'measurement': %s})" % (acq_id, f['name'], efile_measure)
+            # Check if pfilename is in filename and is not 'physio'
+            if pfile_name_noextension in f['name'] and ('physio' not in f['name']):
+                # Add the classification to the file
+                log.debug("Adding measurement %s to the file %s" % (efile_measure, f['name']))
+                #print "fw.set_acquisition_file_info(%s, %s, {'measurement': %s})" % (acq_id, f['name'], efile_measure)
 
         ## (2) Add efile contents to file meta info on pfile (.7.gz), efile (E*.7) and corresponding nifti pfile
         #fw.set_acquisition_file_info(acq_id, files_found[acq_id]['pfile_name'], info)
@@ -239,5 +274,3 @@ if __name__ == '__main__':
         # TODO: add efile contents to file meta info on pfile in nifti format (.nii.gz) Determine if nifti file is present. Will this be delayed?
         #fw.set_acquisition_file_info(acq_id, files_found[acq_id]['pfile_nii_name'], info)
         #print "fw.set_acquisition_file_info(%s, %s, info)" % (acq_id, [''])
-
-        #pprint(info)
